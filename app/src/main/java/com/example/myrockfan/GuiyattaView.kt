@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -23,47 +26,58 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+// --- PALETA DE COLORES (Madera y cuerdas) ---
+val WoodDark = Color(0xFF1A0F0A) // Casi negro
+val WoodReddish = Color(0xFF4E2A1A) // Caoba
+val BronzeDark = Color(0xFF8B5A2B) // Cuerda grave sombra
+val BronzeLight = Color(0xFFE6C68C) // Cuerda grave brillo
+val SteelDark = Color(0xFF555555) // Cuerda aguda sombra
+val SteelLight = Color(0xFFDDDDDD) // Cuerda aguda brillo
+
 @Composable
 fun GuitarraTrigger(
+    modifier: Modifier = Modifier,
     onStrum: () -> Unit,
     isVisible: Boolean
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Altura donde estamos tocando (para doblar la cuerda ahí)
-    var touchY by remember { mutableFloatStateOf(0f) }
-
-    // Desplazamiento de cada cuerda (cuánto se dobla)
-    val stringDeformations = remember { List(6) { Animatable(0f) } }
-
+    // --- SONIDO (Punto 1: Recuperado) ---
     val mediaPlayer = remember {
         try { MediaPlayer.create(context, R.raw.guitar_strum) } catch (e: Exception) { null }
     }
 
-    // Evitar múltiples disparos
+    // Aseguramos liberar memoria cuando el componente muere
+    DisposableEffect(Unit) {
+        onDispose { mediaPlayer?.release() }
+    }
+
+    // --- FÍSICA ---
+    var touchY by remember { mutableFloatStateOf(0f) }
+    // 6 Cuerdas (Punto 2)
+    val stringDeformations = remember { List(6) { Animatable(0f) } }
     var hasTriggered by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(350.dp)
-            // DETECTOR DE GESTOS
             .pointerInput(isVisible) {
                 if (isVisible) {
                     detectDragGestures(
                         onDragStart = { offset ->
                             hasTriggered = false
-                            touchY = offset.y // Guardamos donde empieza el toque
+                            touchY = offset.y
                         },
                         onDragEnd = {
-                            // Al soltar, todas las cuerdas rebotan a 0 (rectas)
+                            // Rebote elástico al soltar
                             stringDeformations.forEach { anim ->
                                 scope.launch {
                                     anim.animateTo(
                                         targetValue = 0f,
                                         animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioHighBouncy, // Muy elástico
+                                            dampingRatio = Spring.DampingRatioHighBouncy,
                                             stiffness = Spring.StiffnessMedium
                                         )
                                     )
@@ -72,32 +86,28 @@ fun GuitarraTrigger(
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            touchY = change.position.y // Actualizamos altura del dedo
+                            touchY = change.position.y
 
-                            // LÓGICA DE INTERACCIÓN FÍSICA
+                            // LÓGICA DE INTERACCIÓN
                             val width = size.width
-                            val totalGuitarWidth = width * 0.7f
+                            val totalGuitarWidth = width * 0.85f // Ocupa un poco más de ancho
                             val startX = (width - totalGuitarWidth) / 2
-                            val stringSpacing = totalGuitarWidth / 5
+                            val stringSpacing = totalGuitarWidth / 5 // Espacio entre 6 cuerdas
 
-                            // Recorremos las cuerdas para ver cuál estamos "empujando"
+                            // Calculamos qué cuerdas se ven afectadas por el dedo
                             stringDeformations.forEachIndexed { index, anim ->
                                 val stringX = startX + (stringSpacing * index)
                                 val fingerX = change.position.x
-
-                                // Distancia del dedo a esta cuerda
                                 val dist = abs(fingerX - stringX)
 
-                                // Si el dedo está cerca (zona de influencia de 60px), doblamos la cuerda
-                                if (dist < 80f) {
+                                // Radio de acción del dedo (aumentado un poco para mejor tacto)
+                                if (dist < 90f) {
                                     scope.launch {
-                                        // La cuerda se mueve con el dedo (dragAmount.x)
-                                        // pero con un límite para que no parezca chicle infinito
-                                        val newTarget = (anim.value + dragAmount.x).coerceIn(-60f, 60f)
+                                        val newTarget = (anim.value + dragAmount.x).coerceIn(-70f, 70f)
                                         anim.snapTo(newTarget)
                                     }
                                 } else {
-                                    // Si el dedo se aleja, la cuerda empieza a volver (efecto estela)
+                                    // Efecto estela suave si te alejas
                                     if (abs(anim.value) > 0.1f) {
                                         scope.launch {
                                             anim.animateTo(0f, spring(dampingRatio = 0.4f))
@@ -106,10 +116,15 @@ fun GuitarraTrigger(
                                 }
                             }
 
-                            // Disparar la acción si hay movimiento brusco general
-                            if (!hasTriggered && abs(dragAmount.x) > 10) {
+                            // DISPARADOR DE SONIDO Y ACCIÓN
+                            if (!hasTriggered && abs(dragAmount.x) > 15) {
                                 hasTriggered = true
-                                if (mediaPlayer?.isPlaying == true) mediaPlayer.seekTo(0) else mediaPlayer?.start()
+                                // Reiniciar sonido si ya estaba sonando
+                                if (mediaPlayer?.isPlaying == true) {
+                                    mediaPlayer.seekTo(0)
+                                } else {
+                                    mediaPlayer?.start()
+                                }
                                 onStrum()
                             }
                         }
@@ -121,40 +136,98 @@ fun GuitarraTrigger(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
-            val totalGuitarWidth = width * 0.7f
+
+            // =========================================================
+            // CAPA 1: CUERPO DE MADERA (FONDO REALISTA)
+            // =========================================================
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(WoodDark, WoodReddish, WoodDark),
+                    startY = 0f,
+                    endY = height
+                )
+            )
+            // Viñeteado radial para dar volumen al cuerpo
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
+                    center = center,
+                    radius = height * 0.9f
+                )
+            )
+
+            // =========================================================
+            // CAPA 2: PUENTE/HARDWARE (Visual)
+            // =========================================================
+            val bridgeHeight = 40.dp.toPx()
+            val bridgeY = height - bridgeHeight
+
+            // Barra metálica del puente
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFF333333), Color(0xFF111111))
+                ),
+                topLeft = Offset(0f, bridgeY),
+                size = Size(width, bridgeHeight)
+            )
+
+            // =========================================================
+            // CAPA 3: LAS 6 CUERDAS (Punto 2 y 3)
+            // =========================================================
+            val totalGuitarWidth = width * 0.85f
             val startX = (width - totalGuitarWidth) / 2
             val stringSpacing = totalGuitarWidth / 5
 
-            val colorNickel = Color(0xFFC0C0C0)
-            val colorBronze = Color(0xFFCD7F32)
-
             for (i in 0..5) {
                 val baseX = startX + (stringSpacing * i)
-
-                // AQUÍ ESTÁ LA MAGIA DE LA CURVA
-                // La cuerda empieza arriba (baseX, 0) y acaba abajo (baseX, height)
-                // Pero tiene un punto de control en (baseX + deformación, touchY)
-
                 val deformation = stringDeformations[i].value
-                val path = Path().apply {
-                    moveTo(baseX, 0f) // Punto inicio (Arriba)
 
-                    // Curva cuadrática hacia donde está el dedo
+                // Grosor decreciente: La 0 es la más gorda (Mi grave), la 5 la fina (Mi agudo)
+                val baseThickness = when(i) {
+                    0 -> 9f; 1 -> 8f; 2 -> 7f // Entorchadas (Gruesas)
+                    3 -> 5f; 4 -> 4f; 5 -> 3f // Lisas (Finas)
+                    else -> 2f
+                }
+
+                // Cálculo de la Curva (Tu lógica Bezier intacta)
+                val path = Path().apply {
+                    moveTo(baseX, 0f)
                     quadraticBezierTo(
-                        baseX + deformation, // X del punto de control (doblado)
-                        touchY.coerceIn(0f, height), // Y del punto de control (dedo)
-                        baseX, // X final (recto)
-                        height // Y final (Abajo)
+                        baseX + deformation,
+                        touchY.coerceIn(0f, height),
+                        baseX,
+                        height
                     )
                 }
 
-                val stringColor = if (i < 3) colorBronze else colorNickel
-                val thickness = if (i < 3) (5f - i) else (2f)
+                // --- DIBUJO DE SOMBRA (Para que floten) ---
+                drawPath(
+                    path = path,
+                    color = Color.Black.copy(alpha = 0.5f),
+                    style = Stroke(width = baseThickness * 1.5f, cap = StrokeCap.Round),
+                    // Desplazamos la sombra un poco a la derecha
+                )
+                // (Nota: drawPath no tiene offset nativo fácil sin translate,
+                // pero al ser cuerdas finas, la sombra centrada ancha funciona bien como "ambient occlusion")
+
+                // --- DIBUJO DE LA CUERDA 3D ---
+                // Diferenciamos materiales: Bronce para graves, Acero para agudas
+                val isWound = i < 3 // Las 3 primeras son entorchadas
+
+                val stringBrush = Brush.horizontalGradient(
+                    colors = if (isWound) {
+                        listOf(BronzeDark, BronzeLight, BronzeDark) // Efecto cilíndrico dorado
+                    } else {
+                        listOf(SteelDark, SteelLight, SteelDark) // Efecto cilíndrico plateado
+                    },
+                    startX = baseX - 10, // Ajuste aproximado para el degradado
+                    endX = baseX + 10
+                )
 
                 drawPath(
                     path = path,
-                    color = stringColor,
-                    style = Stroke(width = thickness, cap = StrokeCap.Round)
+                    brush = stringBrush, // Usamos Brush en vez de Color plano
+                    style = Stroke(width = baseThickness, cap = StrokeCap.Round)
                 )
             }
         }

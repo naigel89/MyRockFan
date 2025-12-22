@@ -34,28 +34,57 @@ object ImageRepository {
         .build()
         .create(GoogleSearchApi::class.java)
 
-    suspend fun searchImage(query: String): String? {
+    suspend fun searchImage(originalQuery: String): String? {
         return try {
-            // CHIVATO 1: ¿Qué estamos buscando?
-            android.util.Log.d("FOTO_DEBUG", "🚀 Buscando en Google: '$query'")
+            // 1. MEJORA DE QUERY: Añadimos filtros negativos para evitar redes sociales
+            // Esto le dice a Google: "Busca esto, pero NO en tiktok, instagram, etc"
+            val forbiddenSites = "-site:tiktok.com -site:instagram.com -site:facebook.com -site:pinterest.com -site:youtube.com"
+            val refinedQuery = "$originalQuery $forbiddenSites"
 
-            val response = api.searchImages(BuildConfig.apiSearchKey, CX_ID, query)
+            // CHIVATO 1: ¿Qué estamos buscando? (Ahora mostramos la query refinada)
+            android.util.Log.d("FOTO_DEBUG", "🚀 Buscando en Google: '$refinedQuery'")
+
+            // Asumimos que tu llamada api.searchImages devuelve por defecto 10 resultados
+            val response = api.searchImages(BuildConfig.apiSearchKey, CX_ID, refinedQuery)
+            val items = response.items
 
             // CHIVATO 2: ¿Qué respondió Google?
-            val items = response.items
             if (!items.isNullOrEmpty()) {
-                val url = items[0].link
-                android.util.Log.d("FOTO_DEBUG", "✅ FOTO ENCONTRADA: $url")
-                url
+
+                // 2. FILTRO DE CALIDAD (Kotlin)
+                // En lugar de coger items[0] directo, buscamos el PRIMERO que cumpla las reglas.
+                val validItem = items.firstOrNull { item ->
+                    val link = item.link?.lowercase() ?: ""
+
+                    // Regla A: Tiene que ser un archivo de imagen real
+                    val isRealFile = link.contains(".jpg") ||
+                            link.contains(".jpeg") ||
+                            link.contains(".png") ||
+                            link.contains(".webp")
+
+                    // Regla B: Filtro de seguridad extra (por si Google cuela algo)
+                    val isNotSocial = !link.contains("tiktok.com") && !link.contains("instagram.com")
+
+                    isRealFile && isNotSocial
+                }
+
+                if (validItem != null) {
+                    val url = validItem.link
+                    android.util.Log.d("FOTO_DEBUG", "✅ FOTO ENCONTRADA y VALIDADA: $url")
+                    url
+                } else {
+                    android.util.Log.w("FOTO_DEBUG", "⚠️ Google trajo resultados, pero ninguno era un archivo de imagen válido (.jpg/.png).")
+                    null
+                }
+
             } else {
-                android.util.Log.e("FOTO_DEBUG", "⚠️ Google devolvió 0 resultados. ¿Query muy larga?")
+                android.util.Log.e("FOTO_DEBUG", "⚠️ Google devolvió 0 resultados. ¿Query muy larga o muy restrictiva?")
                 null
             }
 
         } catch (e: Exception) {
             // CHIVATO 3: ¿Explotó?
             android.util.Log.e("FOTO_DEBUG", "❌ ERROR CRÍTICO API: ${e.message}")
-            // Esto suele ser error 403 (Permisos) o 400 (Bad Request)
             e.printStackTrace()
             null
         }

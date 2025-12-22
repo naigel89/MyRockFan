@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
 import androidx.compose.ui.unit.dp
@@ -294,39 +295,46 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
             }
 
             is StoryUiState.Idle, is StoryUiState.Error -> {
-                // Estado Inicial o Error: Mostramos mensaje de bienvenida
-                // Aquí usamos una columna centrada
+                // ESTADO INICIAL (Pantalla de Bienvenida)
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(24.dp), // Aquí sí queremos margen
+                        .padding(top = 100.dp, start = 24.dp, end = 24.dp), // 1. Mover arriba
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                    verticalArrangement = Arrangement.Top // 2. Alinear al principio
                 ) {
-                    // Si es error, mostramos el mensaje
+                    // Si hay error, lo mostramos discreto
                     if (state is StoryUiState.Error) {
                         Text(
                             text = "Error: ${state.message}",
-                            color = Color.Red,
-                            style = RockTypography.bodyLarge,
+                            color = Color(0xFFEF5350),
+                            style = RockTypography.labelSmall,
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
                     }
 
+                    // TÍTULO PRINCIPAL (Estilo Revista)
                     Text(
-                        "Bienvenido al Backstage",
-                        style = RockTypography.headlineMedium,
+                        text = "BIENVENIDO AL\nBACKSTAGE",
+                        style = RockTypography.displayLarge.copy(
+                            fontSize = 42.sp, // Un poco más grande para impactar
+                            lineHeight = 44.sp
+                        ),
                         color = Color.White,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // SUBTÍTULO
                     Text(
-                        "Rasguea las cuerdas para desenterrar una leyenda.",
-                        style = RockTypography.bodyLarge,
-                        color = Color.Gray,
+                        text = "La historia del Rock no se lee,\nse invoca. Rasguea las cuerdas para\ndesenterrar una leyenda.",
+                        style = RockTypography.bodyLarge.copy(
+                            color = Color(0xFFB0B0B0),
+                            fontSize = 18.sp
+                        ),
                         textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(100.dp)) // Espacio para la guitarra
                 }
             }
         }
@@ -342,24 +350,36 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(400.dp)
+                    .height(450.dp) // Altura generosa para la guitarra
                     .background(
                         brush = Brush.verticalGradient(
-                            // El degradado debe morir en el MISMO color que el fondo (#121212)
-                            colors = listOf(Color.Transparent, Color(0xFF121212))
+                            colors = listOf(Color.Transparent, Color(0xFF121212), Color(0xFF121212)),
+                            startY = 0f
                         )
                     ),
                 contentAlignment = Alignment.BottomCenter
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+                    // TEXTO DE INSTRUCCIÓN (Más sutil y elegante)
                     Text(
-                        "Rasguea para invocar al Rock",
-                        style = RockTypography.headlineSmall, // Asegúrate de tener este estilo o usa h5
+                        text = "RASGUEA PARA DESBLOQUEAR",
+                        style = RockTypography.labelSmall.copy(
+                            letterSpacing = 2.sp, // Espaciado elegante
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.Gray.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    // Icono o flechita (Opcional)
+                    Text(
+                        text = "^",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    // Asegúrate de que este nombre coincida con tu componente de guitarra (GuitarraElastica o GuitarraTrigger)
+                    // TU GUITARRA NUEVA
                     GuitarraTrigger(
                         onStrum = { viewModel.generateDailyCuriosity() },
                         isVisible = true
