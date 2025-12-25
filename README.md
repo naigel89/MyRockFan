@@ -10,17 +10,14 @@
 
 | Pantalla de Inicio | Generando Historia | Historia & Curiosidad |
 |:---:|:---:|:---:|
-| <img src="screenshots/home.png" width="250"> | <img src="screenshots/loading.png" width="250"> | <img src="screenshots/story.png" width="250"> |
-
-*(Nota: Sube tus capturas a una carpeta llamada 'screenshots' en tu repo)*
+| <img src="https://github.com/user-attachments/assets/a39e7825-aae5-47d8-b4ca-493e548e82ea" width="250"> | <img src="https://github.com/user-attachments/assets/05cf3119-cda6-40b1-b572-d78547ac2681" width="250"> | <img src="https://github.com/user-attachments/assets/b412b57d-c456-45e5-8efc-d2110c43ce79" width="250"> |
 
 ## 🔥 Características Principales
 
-* **🎙️ Narrador IA (Gemini 1.5 Flash):** Integra la API de Google Gemini con un "System Prompt" diseñado para actuar como un locutor de radio experto, generando historias únicas, no repetitivas y emocionalmente ricas.
+* **🎙️ Narrador IA (Gemini 3 Flash):** Integra la API de Google Gemini con un "System Prompt" diseñado para actuar como un locutor de radio experto, generando historias únicas, no repetitivas y emocionalmente ricas.
 * **🎸 Interacción Física (Canvas):** Pantalla de inicio con una guitarra interactiva dibujada con `Canvas`. Las cuerdas responden al tacto usando curvas de Bézier y física de rebote (Spring Animation), simulando la vibración real.
 * **🖼️ Búsqueda Inteligente de Imágenes:** Sistema propio de filtrado (`ImageRepository`) que conecta con Google Custom Search API. Implementa lógica de "Portero de Discoteca" para validar que las imágenes pertenezcan realmente a la banda, descartando resultados basura o irrelevantes.
 * **💿 UI/UX Temática:** Componentes personalizados como un disco de vinilo giratorio con reflejos anisotrópicos (`SweepGradient`) y tipografía estilo revista musical.
-* **🔒 Seguridad:** Gestión de claves API mediante `local.properties` y `BuildConfig` para evitar exponer secretos en el control de versiones.
 
 ## 🛠️ Stack Tecnológico
 
