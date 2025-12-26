@@ -1,1 +1,31 @@
-/build
+# --- SEGURIDAD Y SECRETOS (¡LO MÁS IMPORTANTE!) ---
+# Aquí guardamos las API Keys y rutas del SDK. NUNCA DEBEN SUBIRSE.
+local.properties
+*.jks
+*.keystore
+*.p12
+*.key
+google-services.json
+secrets.properties
+
+# --- Build y Archivos Temporales (Basura que genera Android Studio) ---
+# Estos archivos se generan solos al compilar. No los subas, pesan mucho y dan conflictos.
+.gradle/
+build/
+app/build/
+.cxx/
+.externalNativeBuild/
+
+# --- Configuración del IDE (Android Studio) ---
+# Configuraciones solo tuyas (colores, ventanas abiertas, etc.)
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+captures/
+.navigation/
+
+# --- Kotlin y Logs ---
+.kotlin/
+*.log

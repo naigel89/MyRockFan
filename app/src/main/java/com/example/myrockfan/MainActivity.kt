@@ -9,15 +9,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.* // Importante para Column, Row, Spacer
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.* // Importante para MaterialTheme, Text, Button, Card
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -27,9 +30,14 @@ import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel // Importante para viewModel()
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myrockfan.ui.theme.RockTypography
+import kotlinx.coroutines.launch
+import android.content.Context
+import android.content.Intent
 
+// Punto de entrada de la aplicación Android.
+// Configura el tema visual y delega el control a la navegación principal.
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,74 +49,126 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Gestor de Navegación y Estado Global.
+ *
+ * Esta función actúa como el "cerebro" que decide qué pantalla mostrar basándose en el estado del usuario:
+ * 1. ¿Está cargando las preferencias? -> Muestra Spinner.
+ * 2. ¿Es la primera vez (Onboarding incompleto)? -> Muestra pantalla de selección de bandas.
+ * 3. ¿El usuario pidió editar ajustes? -> Reutiliza la pantalla de Onboarding.
+ * 4. ¿Todo listo? -> Muestra la pantalla principal de historias (StoryScreen).
+ */
 @Composable
 fun MainAppNavigation() {
     val context = LocalContext.current
-    // Recuerda que UserPreferences debe existir en tu proyecto
+    val scope = rememberCoroutineScope()
+    // Instancia de persistencia de datos (DataStore) para recordar si el usuario ya entró.
     val userPreferences = remember { UserPreferences(context) }
 
+    // Leemos si completó el onboarding
     val isOnboardingCompleted by userPreferences.isOnboardingCompleted.collectAsState(initial = null)
 
-    when (isOnboardingCompleted) {
-        null -> {
-            // Cargando...
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+    // Leemos las bandas actuales (para poder editarlas)
+    val currentBands by userPreferences.getSelectedBands.collectAsState(initial = emptySet())
+
+    // Nuevo estado: ¿Estamos mostrando ajustes?
+    var showSettings by remember { mutableStateOf(false) }
+
+    when {
+        // Estado 1: Incertidumbre inicial (DataStore aún no ha respondido). Evita parpadeos.
+        isOnboardingCompleted == null -> {
+            // Cargando inicial...
+            Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color(0xFFEF3868))
             }
         }
-        false -> {
-            OnboardingScreen(onFinished = { })
+        // Estado 2: Flujo de bienvenida. El usuario debe elegir bandas por primera vez.
+        isOnboardingCompleted == false -> {
+            OnboardingScreen(
+                initialSelection = emptySet(),
+                onFinished = { selected ->
+                    // Al terminar, guardamos y esto cambiará isOnboardingCompleted a true automáticamente.
+                    scope.launch { userPreferences.saveBands(selected) }
+                }
+            )
         }
-        true -> {
-            StoryScreen()
+        // Estado 3: Modo Edición. El usuario ya existe pero quiere cambiar sus gustos.
+        showSettings -> {
+            OnboardingScreen(
+                initialSelection = currentBands,
+                onFinished = { newSelection ->
+                    scope.launch {
+                        userPreferences.saveBands(newSelection)
+                        showSettings = false
+                    }
+                }
+            )
+        }
+        // Estado 4: Flujo Principal. El usuario ya está configurado y ve la "Radio/Guitarra".
+        else -> {
+            StoryScreen(
+                // Callback: Cuando en StoryScreen toquen el engranaje, activamos el modo ajustes aquí.
+                onSettingsClick = { showSettings = true }
+            )
         }
     }
 }
 
+/**
+ * Componente visual para la cabecera de la historia.
+ *
+ * Utiliza una técnica de diseño de capas:
+ * 1. Imagen de fondo (AsyncImage).
+ * 2. Degradado vertical (Gradient) para asegurar que el texto blanco sea legible sobre cualquier foto.
+ * 3. Textos y metadatos superpuestos.
+ */
 @Composable
 fun StoryHeader(
     title: String,
     imageUrl: String?,
     category: String = "CURIOSIDADES",
-    readTime: String = "3 min de lectura"
+    readTime: String = "3 min de lectura",
+    onBackClick: () -> Unit,
+    onShareClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(480.dp)
-            .background(Color(0xFF2C2C2C))// Altura muy generosa (casi media pantalla)
+            .background(Color(0xFF2C2C2C))
     ) {
-        // A. IMAGEN DE FONDO
+        // A. CAPA BASE: IMAGEN DE FONDO
         AsyncImage(
-            model = imageUrl ?: "https://picsum.photos/800/1200", // Fallback por si acaso
-            contentDescription = null,
+            model = imageUrl ?: "https://picsum.photos/800/1200",
+            contentDescription = "Imagen de portada para la historia: $title",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
 
-        // B. EL DEGRADADO MÁGICO (Fusiona la foto con el negro)
+        // B. CAPA INTERMEDIA: DEGRADADO DE LEGIBILIDAD
+        // Esencial para diseño UI: oscurece la parte inferior para que el texto resalte.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Transparent,       // Arriba: Se ve la foto
-                            Color(0xAA121212),       // Medio: Oscurece un poco
-                            Color(0xFF121212)        // Abajo: Negro total (tu fondo)
+                            Color.Transparent,       // Arriba: Se ve la foto pura.
+                            Color(0xAA121212),       // Medio: Transición suave.
+                            Color(0xFF121212)        // Abajo: Negro total para fusionarse con el cuerpo.
                         ),
                         startY = 200f // Empieza a oscurecer desde la mitad superior
                     )
                 )
         )
 
-        // C. TEXTOS Y ETIQUETAS (Alineados abajo a la izquierda)
+        // C. CAPA SUPERIOR: INFORMACIÓN
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(horizontal = 24.dp, vertical = 32.dp)
         ) {
-            // 1. Píldora Morada (Categoría)
+            // 1. Etiqueta de Categoría (Estilo "Píldora")
             Surface(
                 color = Color(0xFF7D5260).copy(alpha = 0.8f), // Tono rojizo/morado oscuro elegante
                 shape = RoundedCornerShape(50),
@@ -123,14 +183,14 @@ fun StoryHeader(
                 )
             }
 
-            // 2. Título Serif Impactante
+            // 2. Título Principal
             Text(
                 text = title.uppercase(), // Mayúsculas como en la revista
                 style = RockTypography.displayLarge,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // 3. Metadatos (Reloj)
+            // 3. Metadatos (Tiempo de lectura)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("⏱️", fontSize = 14.sp)
                 Spacer(modifier = Modifier.width(6.dp))
@@ -142,7 +202,8 @@ fun StoryHeader(
             }
         }
 
-        // D. BOTONES FLOTANTES (Atrás y Compartir)
+        // D. BOTONES DE NAVEGACIÓN SUPERIOR
+        // Se colocan en una fila separada en la parte superior.
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -150,22 +211,33 @@ fun StoryHeader(
                 .padding(top = 48.dp, start = 24.dp, end = 24.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Botón Atrás (Simulado)
-            SmallCircleButton(icon = "←")
-            // Botón Compartir (Simulado)
-            SmallCircleButton(icon = "🔗")
+            SmallCircleButton(
+                icon = "←",
+                onClick = onBackClick
+            )
+
+            SmallCircleButton(
+                icon = "🔗",
+                onClick = onShareClick
+            )
         }
     }
 }
 
-// Botoncito auxiliar redondo
+/**
+ * Componente UI reutilizable: Botón circular translúcido (efecto cristal).
+ * Se usa para "Atrás", "Compartir" y "Ajustes".
+ */
 @Composable
-fun SmallCircleButton(icon: String) {
+fun SmallCircleButton(icon: String, onClick: () -> Unit) {
     Surface(
         color = Color.Black.copy(alpha = 0.3f),
         shape = CircleShape,
-        modifier = Modifier.size(44.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        modifier = Modifier
+            .size(44.dp)
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)), CircleShape)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(icon, color = Color.White, fontSize = 20.sp)
@@ -173,55 +245,163 @@ fun SmallCircleButton(icon: String) {
     }
 }
 
-@Composable
-fun StoryScreen(viewModel: MainViewModel = viewModel()) {
-    val uiState by viewModel.uiState.collectAsState()
+/**
+ * Lógica de negocio para compartir:
+ * Convierte la lista de segmentos (texto + imágenes) en un único String formateado
+ * para que sea legible al enviarlo por WhatsApp/Telegram.
+ */
+fun buildFullStoryText(title: String, segments: List<StorySegment>): String {
+    val sb = StringBuilder()
 
-    // Usamos BOX para poder superponer elementos (Fondo, Contenido, Guitarra)
+    // Formato Markdown simple para énfasis
+    sb.append("*$title*\n\n")
+
+    segments.forEach { segment ->
+        when (segment) {
+            is StorySegment.Text -> {
+                sb.append(segment.content.trim())
+                sb.append("\n\n")
+            }
+            // Aquí ignoramos las imágenes porque en texto plano no se pueden incrustar fácilmente,
+            // pero podríamos añadir la URL si quisiéramos.
+            else -> {}
+        }
+    }
+
+    sb.append("🎸 _Generado por My Rock Fan App_")
+
+    return sb.toString()
+}
+
+/**
+ * Utilidad de Android para invocar el "Share Sheet" nativo del sistema.
+ */
+fun shareStory(context: Context, content: String) {
+    val sendIntent = Intent().apply {
+        action = Intent.ACTION_SEND
+        // Ponemos el texto completo generado
+        putExtra(Intent.EXTRA_TEXT, content)
+        type = "text/plain"
+    }
+    // Muestra el menú para elegir app (WhatsApp, Telegram, etc.)
+    val shareIntent = Intent.createChooser(sendIntent, "Compartir historia completa con...")
+    context.startActivity(shareIntent)
+}
+
+/**
+ * Pantalla Principal del Flujo (Core).
+ *
+ * Maneja dos estados visuales principales superpuestos:
+ * 1. "Idle" (Reposo): Muestra la guitarra interactiva y bienvenida.
+ * 2. "Success" (Historia): Muestra el contenido generado y el reproductor de música.
+ * 3. "Loading": Muestra la animación de carga (vinilo).
+ */
+@Composable
+fun StoryScreen(
+    viewModel: MainViewModel = viewModel(),
+    onSettingsClick: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // Box actúa como un "FrameLaout", permitiendo apilar la guitarra sobre el fondo,
+    // o el reproductor sobre el texto.
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212)) // Fondo Negro Rock Global
+            .background(Color(0xFF121212))
     ) {
 
-        // 1. CAPA DE CONTENIDO (La historia o el estado)
+        // --- CAPA 1: CONTENIDO LÓGICO ---
         when (val state = uiState) {
             is StoryUiState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFFEF3868)) // Rosa Hot
-                }
+                RockLoadingScreen()
             }
-
+            // Caso: Historia generada correctamente
             is StoryUiState.Success -> {
-                // LOGICA INTELIGENTE: Buscamos la portada
+                // Estrategia para la portada: Buscamos el primer segmento que sea una imagen válida.
                 val coverImageSegment =
                     state.segments.find { it is StorySegment.ReadyImage } as? StorySegment.ReadyImage
                 val coverUrl = coverImageSegment?.url
 
+                // Efecto secundario: Si no hay un reproductor activo, iniciamos la "banda sonora"
+                // usando metadatos de la historia actual.
+                LaunchedEffect(state) {
+                    if (!viewModel.showPlayer) {
+                        viewModel.setRecommendedTrack(
+                            title = "Greatest Hits",
+                            artist = state.title
+                        )
+                    }
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+
+                    // A. LISTA DE SCROLL (TEXTO E IMÁGENES)
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        // Padding inferior CRÍTICO: asegura que el usuario pueda hacer scroll hasta el final
+                        // sin que el MiniPlayer flotante tape el último párrafo.
+                        contentPadding = PaddingValues(bottom = 80.dp)
+                    ) {
+                        // El contenido se llena dinámicamente abajo..
+                    }
+
+                    // B. ELEMENTO FLOTANTE: MINI REPRODUCTOR
+                    if (viewModel.showPlayer) {
+                        MiniPlayer(
+                            songTitle = viewModel.currentSongTitle,
+                            artistName = viewModel.currentArtist,
+                            coverUrl = null, // Usamos null para que use el icono por defecto o lógica interna
+                            onPlayClick = {
+                                // Redirección externa a Spotify
+                                playOnSpotify(
+                                    context,
+                                    viewModel.currentArtist,
+                                    viewModel.currentSongTitle
+                                )
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter) // Pegado abajo
+                                .padding(16.dp)
+                        )
+                    }
+                }
+
+                // Renderizado detallado de la lista (LazyColumn)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 150.dp) // Espacio final para que la guitarra no tape el final
+                    contentPadding = PaddingValues(bottom = 150.dp)
                 ) {
-                    // A. CABECERA (Portada) - SIN PADDING para que ocupe todo el ancho
+                    // Ítem 0: La Cabecera (Header)
                     item {
                         StoryHeader(
-                            title = cleanTitle(state.title),
-                            imageUrl = coverUrl
+                            title = state.title,
+                            imageUrl = coverUrl,
+                            category = viewModel.currentArtist,
+                            onBackClick = {
+                                viewModel.resetToGuitar()
+                            },
+                            onShareClick = {
+                                val fullText = buildFullStoryText(state.title, state.segments)
+                                shareStory(context, fullText)
+                            }
                         )
                     }
 
-                    // B. CUERPO DE LA HISTORIA
+                    // Ítems 1..N: Segmentos dinámicos (Párrafos o Fotos)
                     items(state.segments) { segment ->
-                        // No repetimos la portada
+                        // Filtramos la portada para no repetirla dentro del cuerpo del texto
                         if (segment == coverImageSegment) return@items
 
                         when (segment) {
                             is StorySegment.Text -> {
                                 // AQUI SÍ ponemos padding, para que el texto respire
                                 Text(
+                                    // Parseo de Markdown (negritas) a estilos de Compose
                                     text = parseMarkdownToAnnotatedString(segment.content),
-                                    style = RockTypography.bodyLarge, // Asegúrate que en Type.kt bodyLarge tenga color blanco/gris
-                                    color = Color(0xFFE0E0E0), // Forzamos color claro por si acaso
+                                    style = RockTypography.bodyLarge,
+                                    color = Color(0xFFE0E0E0),
                                     modifier = Modifier.padding(
                                         horizontal = 24.dp,
                                         vertical = 12.dp
@@ -230,7 +410,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                             }
 
                             is StorySegment.ReadyImage -> {
-                                // Fotos secundarias
+                                // Renderizado de imágenes secundarias insertadas en el texto
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -249,8 +429,8 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                             }
 
                             is StorySegment.ImagePrompt -> {
-                                // SKELETON: Un recuadro gris sutil que preserva el espacio visual
-                                // Si la imagen falla, al menos se ve estructura y no un error.
+                                // "Skeleton Loader": Un marcador de posición mientras la imagen carga
+                                // Mantiene la estructura visual de la historia evitando saltos bruscos.
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -275,10 +455,12 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                                     }
                                 }
                             }
+
+                            else -> {}
                         }
                     }
 
-                    // C. FIRMA FINAL
+                    // Ítem Final: Branding / Pie de página
                     item {
                         Spacer(modifier = Modifier.height(30.dp))
                         Text(
@@ -292,10 +474,41 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                         )
                     }
                 }
+
+                // Reproductor persistente (se repite la lógica visual para asegurar z-index superior)
+                if (viewModel.showPlayer) {
+                    MiniPlayer(
+                        songTitle = viewModel.currentSongTitle,
+                        artistName = viewModel.currentArtist,
+                        coverUrl = viewModel.currentCoverUrl ?: coverUrl, // Usamos la portada encontrada o la de la historia
+                        onPlayClick = {
+                            playOnSpotify(context, viewModel.currentArtist, viewModel.currentSongTitle)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
+                    )
+                }
             }
 
+            // Caso: Pantalla de Inicio (Reposo) o Error
             is StoryUiState.Idle, is StoryUiState.Error -> {
-                // ESTADO INICIAL (Pantalla de Bienvenida)
+                val state = uiState
+
+                // Botón de Ajustes (Engranaje) alineado arriba a la derecha
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 48.dp, end = 24.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    SmallCircleButton(
+                        icon = "⚙️",
+                        onClick = onSettingsClick
+                    )
+                }
+
+                // Contenedor de Texto de Bienvenida
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -303,7 +516,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Top // 2. Alinear al principio
                 ) {
-                    // Si hay error, lo mostramos discreto
+                    // Feedback visual si hubo un error en la generación anterior
                     if (state is StoryUiState.Error) {
                         Text(
                             text = "Error: ${state.message}",
@@ -313,7 +526,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                         )
                     }
 
-                    // TÍTULO PRINCIPAL (Estilo Revista)
+                    // Título de la App ("Welcome")
                     Text(
                         text = "BIENVENIDO AL\nBACKSTAGE",
                         style = RockTypography.displayLarge.copy(
@@ -326,7 +539,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // SUBTÍTULO
+                    // Subtítulo explicativo / Call to Action narrativo
                     Text(
                         text = "La historia del Rock no se lee,\nse invoca. Rasguea las cuerdas para\ndesenterrar una leyenda.",
                         style = RockTypography.bodyLarge.copy(
@@ -337,11 +550,15 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                     )
                 }
             }
+
         }
 
-        // 2. CAPA DE LA GUITARRA (Overlay)
-        // Usamos AnimatedVisibility para que desaparezca suavemente al tener éxito
+        // --- CAPA 2: INTERACCIÓN ESPECIAL (GUITARRA) ---
+        // Overlay inferior que contiene la guitarra interactiva.
+        // AnimatedVisibility gestiona la transición suave (Fade In/Out) para que la guitarra
+        // no desaparezca de golpe cuando carga la historia.
         AnimatedVisibility(
+            // Solo visible si NO estamos viendo una historia y NO está cargando.
             visible = uiState !is StoryUiState.Success && uiState !is StoryUiState.Loading,
             enter = fadeIn(animationSpec = tween(1000)),
             exit = fadeOut(animationSpec = tween(800)),
@@ -350,7 +567,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(450.dp) // Altura generosa para la guitarra
+                    .height(450.dp)
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(Color.Transparent, Color(0xFF121212), Color(0xFF121212)),
@@ -361,7 +578,7 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
 
-                    // TEXTO DE INSTRUCCIÓN (Más sutil y elegante)
+                    // Indicador visual para que el usuario sepa qué hacer
                     Text(
                         text = "RASGUEA PARA DESBLOQUEAR",
                         style = RockTypography.labelSmall.copy(
@@ -372,14 +589,15 @@ fun StoryScreen(viewModel: MainViewModel = viewModel()) {
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
-                    // Icono o flechita (Opcional)
+                    // Elemento decorativo
                     Text(
                         text = "^",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    // TU GUITARRA NUEVA
+                    // COMPONENTE DE GUITARRA (Lógica de Canvas y Gestos)
+                    // Al rasguear, dispara viewModel.generateDailyCuriosity()
                     GuitarraTrigger(
                         onStrum = { viewModel.generateDailyCuriosity() },
                         isVisible = true

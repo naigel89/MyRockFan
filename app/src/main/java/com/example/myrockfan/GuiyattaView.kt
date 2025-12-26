@@ -26,14 +26,22 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-// --- PALETA DE COLORES (Madera y cuerdas) ---
-val WoodDark = Color(0xFF1A0F0A) // Casi negro
-val WoodReddish = Color(0xFF4E2A1A) // Caoba
-val BronzeDark = Color(0xFF8B5A2B) // Cuerda grave sombra
-val BronzeLight = Color(0xFFE6C68C) // Cuerda grave brillo
-val SteelDark = Color(0xFF555555) // Cuerda aguda sombra
-val SteelLight = Color(0xFFDDDDDD) // Cuerda aguda brillo
+/**
+ * Paleta cromática diseñada para evocar materiales orgánicos (madera) y metálicos (cuerdas).
+ * La gradación de tonos permite simular profundidad y desgaste, elementos clave en la estética Rock.
+ */
+val WoodDark = Color(0xFF1A0F0A)
+val WoodReddish = Color(0xFF4E2A1A)
+val BronzeDark = Color(0xFF8B5A2B)
+val BronzeLight = Color(0xFFE6C68C)
+val SteelDark = Color(0xFF555555)
+val SteelLight = Color(0xFFDDDDDD)
 
+/**
+ * Disparador visual y auditivo de la aplicación.
+ * Transforma un gesto táctil en una acción de "invocación" de historias, utilizando una metáfora física 
+ * (el rasgueo) para crear una conexión emocional con el usuario antes de mostrar el contenido.
+ */
 @Composable
 fun GuitarraTrigger(
     modifier: Modifier = Modifier,
@@ -43,19 +51,32 @@ fun GuitarraTrigger(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // --- SONIDO (Punto 1: Recuperado) ---
+    /**
+     * Gestión del recurso de audio. 
+     * Se utiliza MediaPlayer de forma controlada para proporcionar feedback inmediato al gesto, 
+     * reforzando la sensación de "tocar" un instrumento real.
+     */
     val mediaPlayer = remember {
-        try { MediaPlayer.create(context, R.raw.guitar_strum) } catch (e: Exception) { null }
+        try {
+            MediaPlayer.create(context, R.raw.guitar_strum)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 
-    // Aseguramos liberar memoria cuando el componente muere
     DisposableEffect(Unit) {
-        onDispose { mediaPlayer?.release() }
+        onDispose {
+            try { mediaPlayer?.release() } catch (e: Exception) { e.printStackTrace() }
+        }
     }
 
-    // --- FÍSICA ---
+    /**
+     * Sistema de física y deformación.
+     * Utiliza Animatable para simular la elasticidad de las cuerdas. Cada cuerda es independiente, 
+     * permitiendo una respuesta visual dinámica basada en la posición exacta del dedo.
+     */
     var touchY by remember { mutableFloatStateOf(0f) }
-    // 6 Cuerdas (Punto 2)
     val stringDeformations = remember { List(6) { Animatable(0f) } }
     var hasTriggered by remember { mutableStateOf(false) }
 
@@ -71,7 +92,11 @@ fun GuitarraTrigger(
                             touchY = offset.y
                         },
                         onDragEnd = {
-                            // Rebote elástico al soltar
+                            /**
+                             * Efecto de retorno elástico.
+                             * Al soltar, las cuerdas regresan a su posición de equilibrio usando una física de muelle (Spring), 
+                             * simulando la vibración natural de una cuerda de tensión real.
+                             */
                             stringDeformations.forEach { anim ->
                                 scope.launch {
                                     anim.animateTo(
@@ -88,26 +113,27 @@ fun GuitarraTrigger(
                             change.consume()
                             touchY = change.position.y
 
-                            // LÓGICA DE INTERACCIÓN
                             val width = size.width
-                            val totalGuitarWidth = width * 0.85f // Ocupa un poco más de ancho
+                            val totalGuitarWidth = width * 0.85f
                             val startX = (width - totalGuitarWidth) / 2
-                            val stringSpacing = totalGuitarWidth / 5 // Espacio entre 6 cuerdas
+                            val stringSpacing = totalGuitarWidth / 5
 
-                            // Calculamos qué cuerdas se ven afectadas por el dedo
+                            /**
+                             * Cálculo de proximidad y deformación.
+                             * El dedo solo afecta a las cuerdas que se encuentran dentro de su radio de acción, 
+                             * aplicando un desplazamiento lateral (snapTo) para una respuesta de latencia cero.
+                             */
                             stringDeformations.forEachIndexed { index, anim ->
                                 val stringX = startX + (stringSpacing * index)
                                 val fingerX = change.position.x
                                 val dist = abs(fingerX - stringX)
 
-                                // Radio de acción del dedo (aumentado un poco para mejor tacto)
                                 if (dist < 90f) {
                                     scope.launch {
                                         val newTarget = (anim.value + dragAmount.x).coerceIn(-70f, 70f)
                                         anim.snapTo(newTarget)
                                     }
                                 } else {
-                                    // Efecto estela suave si te alejas
                                     if (abs(anim.value) > 0.1f) {
                                         scope.launch {
                                             anim.animateTo(0f, spring(dampingRatio = 0.4f))
@@ -116,10 +142,13 @@ fun GuitarraTrigger(
                                 }
                             }
 
-                            // DISPARADOR DE SONIDO Y ACCIÓN
+                            /**
+                             * Umbral de activación.
+                             * Define cuánta fuerza/distancia se requiere para considerar que el rasgueo ha tenido éxito, 
+                             * evitando disparos accidentales y asegurando que la acción sea deliberada.
+                             */
                             if (!hasTriggered && abs(dragAmount.x) > 15) {
                                 hasTriggered = true
-                                // Reiniciar sonido si ya estaba sonando
                                 if (mediaPlayer?.isPlaying == true) {
                                     mediaPlayer.seekTo(0)
                                 } else {
@@ -137,9 +166,10 @@ fun GuitarraTrigger(
             val width = size.width
             val height = size.height
 
-            // =========================================================
-            // CAPA 1: CUERPO DE MADERA (FONDO REALISTA)
-            // =========================================================
+            /**
+             * Representación visual del cuerpo (Fondo).
+             * Aplica degradados lineales y radiales para imitar el lacado de una guitarra de alta gama y su volumen.
+             */
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(WoodDark, WoodReddish, WoodDark),
@@ -147,7 +177,6 @@ fun GuitarraTrigger(
                     endY = height
                 )
             )
-            // Viñeteado radial para dar volumen al cuerpo
             drawRect(
                 brush = Brush.radialGradient(
                     colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
@@ -156,13 +185,9 @@ fun GuitarraTrigger(
                 )
             )
 
-            // =========================================================
-            // CAPA 2: PUENTE/HARDWARE (Visual)
-            // =========================================================
             val bridgeHeight = 40.dp.toPx()
             val bridgeY = height - bridgeHeight
 
-            // Barra metálica del puente
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(Color(0xFF333333), Color(0xFF111111))
@@ -171,9 +196,12 @@ fun GuitarraTrigger(
                 size = Size(width, bridgeHeight)
             )
 
-            // =========================================================
-            // CAPA 3: LAS 6 CUERDAS (Punto 2 y 3)
-            // =========================================================
+            /**
+             * Renderizado de cuerdas dinámicas.
+             * 1. Diferencia calibres y materiales (bronce vs acero) para realismo visual.
+             * 2. Utiliza curvas de Bézier cuadráticas para representar la deformación física en tiempo real.
+             * 3. Aplica degradados metálicos para simular el brillo del metal bajo los focos del escenario.
+             */
             val totalGuitarWidth = width * 0.85f
             val startX = (width - totalGuitarWidth) / 2
             val stringSpacing = totalGuitarWidth / 5
@@ -182,14 +210,12 @@ fun GuitarraTrigger(
                 val baseX = startX + (stringSpacing * i)
                 val deformation = stringDeformations[i].value
 
-                // Grosor decreciente: La 0 es la más gorda (Mi grave), la 5 la fina (Mi agudo)
                 val baseThickness = when(i) {
-                    0 -> 9f; 1 -> 8f; 2 -> 7f // Entorchadas (Gruesas)
-                    3 -> 5f; 4 -> 4f; 5 -> 3f // Lisas (Finas)
+                    0 -> 9f; 1 -> 8f; 2 -> 7f
+                    3 -> 5f; 4 -> 4f; 5 -> 3f
                     else -> 2f
                 }
 
-                // Cálculo de la Curva (Tu lógica Bezier intacta)
                 val path = Path().apply {
                     moveTo(baseX, 0f)
                     quadraticBezierTo(
@@ -200,33 +226,26 @@ fun GuitarraTrigger(
                     )
                 }
 
-                // --- DIBUJO DE SOMBRA (Para que floten) ---
                 drawPath(
                     path = path,
                     color = Color.Black.copy(alpha = 0.5f),
                     style = Stroke(width = baseThickness * 1.5f, cap = StrokeCap.Round),
-                    // Desplazamos la sombra un poco a la derecha
                 )
-                // (Nota: drawPath no tiene offset nativo fácil sin translate,
-                // pero al ser cuerdas finas, la sombra centrada ancha funciona bien como "ambient occlusion")
 
-                // --- DIBUJO DE LA CUERDA 3D ---
-                // Diferenciamos materiales: Bronce para graves, Acero para agudas
-                val isWound = i < 3 // Las 3 primeras son entorchadas
-
+                val isWound = i < 3
                 val stringBrush = Brush.horizontalGradient(
                     colors = if (isWound) {
-                        listOf(BronzeDark, BronzeLight, BronzeDark) // Efecto cilíndrico dorado
+                        listOf(BronzeDark, BronzeLight, BronzeDark)
                     } else {
-                        listOf(SteelDark, SteelLight, SteelDark) // Efecto cilíndrico plateado
+                        listOf(SteelDark, SteelLight, SteelDark)
                     },
-                    startX = baseX - 10, // Ajuste aproximado para el degradado
+                    startX = baseX - 10,
                     endX = baseX + 10
                 )
 
                 drawPath(
                     path = path,
-                    brush = stringBrush, // Usamos Brush en vez de Color plano
+                    brush = stringBrush,
                     style = Stroke(width = baseThickness, cap = StrokeCap.Round)
                 )
             }

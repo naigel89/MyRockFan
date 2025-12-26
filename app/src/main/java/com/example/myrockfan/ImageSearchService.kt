@@ -5,11 +5,15 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Query
 
-// 1. Definimos cómo es la respuesta de Google (solo nos importa el link)
+// Modelos de datos anémicos para mapear la respuesta JSON.
+// Capturamos 'title' y 'snippet' específicamente para validar el contexto semántico de la imagen.
 data class SearchResponse(val items: List<SearchItem>?)
-data class SearchItem(val link: String)
+data class SearchItem(
+    val link: String,
+    val title: String?,   // <--- NUEVO: Necesitamos leer el título
+    val snippet: String?  // <--- NUEVO: A veces la info está aquí
+)
 
-// 2. Definimos la interfaz de la API
 interface GoogleSearchApi {
     @GET("customsearch/v1")
     suspend fun searchImages(
@@ -17,16 +21,18 @@ interface GoogleSearchApi {
         @Query("cx") cx: String,
         @Query("q") query: String,
         @Query("searchType") searchType: String = "image",
-        @Query("num") num: Int = 1 // Solo queremos 1 foto
+        // ESTRATEGIA DE VOLUMEN:
+        // Pedimos 10 resultados (en lugar de 1) para alimentar nuestro algoritmo de filtrado local.
+        // Si el primero es malo (ej: TikTok), tendremos 9 candidatos más en la recámara.
+        @Query("num") num: Int = 10,
+        @Query("imgSize") imgSize: String = "xlarge",
+        @Query("safe") safe: String = "active"
     ): SearchResponse
 }
 
-// 3. Objeto singleton para usarlo desde cualquier lado
 object ImageRepository {
     private const val BASE_URL = "https://www.googleapis.com/"
-
-    // ¡¡PEGAR TU CX ID AQUÍ!!
-    private const val CX_ID = "a62990b1356df43a1"
+    private const val CX_ID = BuildConfig.cxId
 
     private val api = Retrofit.Builder()
         .baseUrl(BASE_URL)
@@ -34,59 +40,131 @@ object ImageRepository {
         .build()
         .create(GoogleSearchApi::class.java)
 
-    suspend fun searchImage(originalQuery: String): String? {
+    // FILTRADO NEGATIVO (Noise Reduction):
+    // Esta lista negra elimina dominios que:
+    // 1. Tienen alto SEO pero imágenes irrelevantes (Pinterest, Amazon).
+    // 2. Bloquean el hotlinking (Instagram, Facebook -> Error 403).
+    // 3. Venden fotos con marcas de agua (Getty, Shutterstock).
+    private val forbiddenSites = """
+        -site:tiktok.com -site:instagram.com -site:facebook.com 
+        -site:pinterest.com -site:youtube.com -site:amazon.com 
+        -site:ebay.com -site:gettyimages.com -site:alamy.com 
+        -site:vectorstock.com -site:shutterstock.com -site:lookaside.fbsbx.com
+        -site:media-amazon.com -site:gstatic.com -site:stock.adobe.com
+        -site:etsy.com -site:mercadolibre.com -site:wallapop.com
+    """.trimIndent().replace("\n", " ")
+
+    /**
+     * Orquestador principal de la búsqueda.
+     * Implementa un patrón de "Doble Intento" (Two-Tier Strategy) para equilibrar precisión y disponibilidad.
+     */
+    suspend fun searchImage(originalQuery: String, contextKeywords: String = ""): String? {
+        // TIER 1: PRECISIÓN QUIRÚRGICA
+        // Buscamos la escena exacta que narró la IA (ej: "grabación estudio").
+        // Aplicamos validación estricta: el título debe contener TODAS las palabras clave de la banda.
+        val specificUrl = internalSearch(
+            query = "$contextKeywords $originalQuery $forbiddenSites",
+            requiredKeywords = contextKeywords,
+            isStrict = true
+        )
+
+        if (specificUrl != null) {
+            return specificUrl
+        }
+
+        // TIER 2: RED DE SEGURIDAD (FALLBACK)
+        // Si la búsqueda específica falló (demasiado restrictiva o sin resultados),
+        // sacrificamos precisión contextual para garantizar que al menos mostramos a la banda correcta.
+        // Buscamos algo genérico ("wallpaper") y relajamos la validación (isStrict = false).
+        android.util.Log.w("FOTO_DEBUG", "⚠️ Escena específica no encontrada. Activando PLAN B (Genérico).")
+
+        val genericUrl = internalSearch(
+            query = "$contextKeywords band wallpaper live concert rock high quality $forbiddenSites",
+            requiredKeywords = contextKeywords,
+            isStrict = false
+        )
+
+        return genericUrl
+    }
+
+    /**
+     * Motor de búsqueda y validación lógica.
+     * Aquí reside el algoritmo "Portero de Discoteca" que decide si una imagen es digna de mostrarse.
+     */
+    private suspend fun internalSearch(query: String, requiredKeywords: String, isStrict: Boolean): String? {
         return try {
-            // 1. MEJORA DE QUERY: Añadimos filtros negativos para evitar redes sociales
-            // Esto le dice a Google: "Busca esto, pero NO en tiktok, instagram, etc"
-            val forbiddenSites = "-site:tiktok.com -site:instagram.com -site:facebook.com -site:pinterest.com -site:youtube.com"
-            val refinedQuery = "$originalQuery $forbiddenSites"
+            android.util.Log.d("FOTO_DEBUG", "🔎 Buscando ($isStrict): '$query'")
 
-            // CHIVATO 1: ¿Qué estamos buscando? (Ahora mostramos la query refinada)
-            android.util.Log.d("FOTO_DEBUG", "🚀 Buscando en Google: '$refinedQuery'")
-
-            // Asumimos que tu llamada api.searchImages devuelve por defecto 10 resultados
-            val response = api.searchImages(BuildConfig.apiSearchKey, CX_ID, refinedQuery)
+            val response = api.searchImages(BuildConfig.apiSearchKey, CX_ID, query)
             val items = response.items
 
-            // CHIVATO 2: ¿Qué respondió Google?
-            if (!items.isNullOrEmpty()) {
+            if (items.isNullOrEmpty()) return null
 
-                // 2. FILTRO DE CALIDAD (Kotlin)
-                // En lugar de coger items[0] directo, buscamos el PRIMERO que cumpla las reglas.
-                val validItem = items.firstOrNull { item ->
-                    val link = item.link?.lowercase() ?: ""
+            // HEURÍSTICA DE SELECCIÓN:
+            // Iteramos sobre los candidatos y nos quedamos con el PRIMERO que cumpla todas las reglas.
+            val validItem = items.firstOrNull { item ->
+                // Normalización: Eliminamos acentos y mayúsculas para comparar (Bogotá == bogota).
+                val link = item.link?.normalize() ?: ""
+                val title = (item.title ?: "").normalize()
+                val snippet = (item.snippet ?: "").normalize()
+                val bandNameClean = requiredKeywords.normalize()
 
-                    // Regla A: Tiene que ser un archivo de imagen real
-                    val isRealFile = link.contains(".jpg") ||
-                            link.contains(".jpeg") ||
-                            link.contains(".png") ||
-                            link.contains(".webp")
+                // REGLA 1: HIGIENE TÉCNICA
+                // - Debe ser un archivo de imagen estático.
+                // - Evitamos URLs "sucias" (con query params '?' o muy largas) que suelen ser redirecciones o fallar en Coil.
+                val isImage = link.endsWith(".jpg") || link.endsWith(".jpeg") || link.endsWith(".png") || link.endsWith(".webp")
+                val isCleanUrl = link.length < 400 && !link.contains("?")
 
-                    // Regla B: Filtro de seguridad extra (por si Google cuela algo)
-                    val isNotSocial = !link.contains("tiktok.com") && !link.contains("instagram.com")
+                if (!isImage || !isCleanUrl) return@firstOrNull false
 
-                    isRealFile && isNotSocial
-                }
+                // REGLA 2: VALIDACIÓN DE IDENTIDAD SEMÁNTICA
+                if (bandNameClean.isNotEmpty()) {
+                    // Tokenizamos el nombre de la banda para buscar coincidencias parciales.
+                    // Filtramos artículos/conectores cortos (< 2 chars) para evitar falsos positivos con "The", "El".
+                    val nameParts = bandNameClean.split(" ").filter { it.length > 2 }
 
-                if (validItem != null) {
-                    val url = validItem.link
-                    android.util.Log.d("FOTO_DEBUG", "✅ FOTO ENCONTRADA y VALIDADA: $url")
-                    url
+                    // Verificamos presencia en metadatos (Título, Snippet o la propia URL)
+                    val matches = nameParts.count { part ->
+                        title.contains(part) || snippet.contains(part) || link.contains(part)
+                    }
+
+                    if (isStrict) {
+                        // MODO ESTRICTO (Tier 1):
+                        // Exigimos coincidencia TOTAL. Si buscamos "Arde Bogotá", deben aparecer "arde" Y "bogota".
+                        // Esto evita que "Bogotá Music Festival" salga cuando buscamos a la banda.
+                        matches == nameParts.size
+                    } else {
+                        // MODO LAXO (Tier 2):
+                        // Aceptamos coincidencia PARCIAL. Útil para nombres largos o complejos.
+                        // Garantiza que al menos hay una relación fuerte con la búsqueda.
+                        matches >= 1
+                    }
                 } else {
-                    android.util.Log.w("FOTO_DEBUG", "⚠️ Google trajo resultados, pero ninguno era un archivo de imagen válido (.jpg/.png).")
-                    null
+                    true // Si no hay contexto (búsqueda libre), confiamos en Google.
                 }
-
-            } else {
-                android.util.Log.e("FOTO_DEBUG", "⚠️ Google devolvió 0 resultados. ¿Query muy larga o muy restrictiva?")
-                null
             }
 
+            validItem?.link
+
         } catch (e: Exception) {
-            // CHIVATO 3: ¿Explotó?
-            android.util.Log.e("FOTO_DEBUG", "❌ ERROR CRÍTICO API: ${e.message}")
             e.printStackTrace()
             null
         }
     }
+}
+
+/**
+ * Utilidad de normalización de cadenas.
+ * Crucial para bandas hispanas o con caracteres especiales (Mötley Crüe, Arde Bogotá).
+ * Convierte todo a ASCII básico lowercase para comparaciones robustas.
+ */
+fun String.normalize(): String {
+    var result = this.lowercase()
+    result = result.replace("á", "a")
+    result = result.replace("é", "e")
+    result = result.replace("í", "i")
+    result = result.replace("ó", "o")
+    result = result.replace("ú", "u")
+    result = result.replace("ñ", "n")
+    return result
 }

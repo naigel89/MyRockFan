@@ -26,9 +26,11 @@ android {
 
         val apiKey = properties.getProperty("apiKey") ?: ""
         val apiSearchKey = properties.getProperty("apiSearchKey") ?: ""
-
+        val cxId = properties.getProperty("cxId") ?: ""
+        
         buildConfigField("String", "apiKey", "\"$apiKey\"")
         buildConfigField("String", "apiSearchKey", "\"$apiSearchKey\"")
+        buildConfigField("String", "cxId", "\"$cxId\"")
     }
 
     buildTypes {
